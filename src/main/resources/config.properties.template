@@ -1,0 +1,4 @@
+mysql.url=jdbc:mysql://localhost/<database>?useUnicode=true&characterEncoding=UTF-8&useSSL=false
+mysql.user=<user>
+mysql.password=<password>
+mdb.import=<file-to-import>.mdb
