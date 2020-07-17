@@ -14,10 +14,13 @@ import java.util.Arrays;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.BooleanUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.time.FastDateFormat;
+import org.apache.commons.lang3.time.StopWatch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -34,13 +37,14 @@ import com.healthmarketscience.jackcess.impl.IndexImpl;
 
 public class Converter {
     private static final Logger LOG = LoggerFactory.getLogger(Converter.class);
+    private static final String IMPORT_STATUS_TABLE = "mdb_import_status";
     
     private Connection mysqlConnection;
     private Database accessDb;
     
     public static void main(String[] args) throws IOException, ClassNotFoundException, SQLException {
         if (Arrays.stream(args).anyMatch("-h"::equals) || Arrays.stream(args).anyMatch("--help"::equals)) {
-            showHelpAndExit();
+            showHelpAndExit(0);
         }
         
         String mysqlUrl = null;
@@ -58,7 +62,10 @@ public class Converter {
                     mysqlUrl = properties.getProperty("mysql.url");
                     mysqlUser = properties.getProperty("mysql.user");
                     mysqlPassword = properties.getProperty("mysql.password");
-                    mdbImport = new File(properties.getProperty("mdb.import"));
+                    String mdbImportProp = properties.getProperty("mdb.import");
+                    if (mdbImportProp != null) {
+                        mdbImport = new File(mdbImportProp);
+                    }
                     break;
                 case "--mysqlurl":
                     verifyParameterArgument("mysqlurl", args, i);
@@ -79,7 +86,7 @@ public class Converter {
                 default:
                     System.out.println("ERROR: Unknown parameter " + args[i]);
                     System.out.println("");
-                    showHelpAndExit();
+                    showHelpAndExit(1);
             }
         }
         
@@ -88,16 +95,10 @@ public class Converter {
         verifyParameter("mysqlpassword", mysqlPassword);
         verifyParameter("mdb", mdbImport);
         
-        System.out.println("");
-        System.out.println("mysqlUrl: " + mysqlUrl);
-        System.out.println("mysqlUser: " + mysqlUser);
-        System.out.println("mysqlPassword: " + mysqlPassword);
-        System.out.println("mdb: " + mdbImport.getAbsolutePath());
-        
-        //new Converter(mysqlUrl, mysqlUser, mysqlPassword, mdbImport);
+        new Converter(mysqlUrl, mysqlUser, mysqlPassword, mdbImport);
     }
     
-    private static void showHelpAndExit() {
+    private static void showHelpAndExit(int exitCode) {
         System.out.println("Uitleenconverter");
         System.out.println("");
         System.out.println("-h | --help:");
@@ -112,14 +113,14 @@ public class Converter {
         System.out.println("\tMySQL password to connect with to the database. WARNING: this is not secure, use config file instead.");
         System.out.println("--mdb <file>");
         System.out.println("\tMDB file to convert to MySQL");
-        System.exit(0);
+        System.exit(exitCode);
     }
     
     private static void verifyParameterArgument(String name, String[] args, int index) {
         if (index + 1 >= args.length) {
             System.out.println("ERROR: Missing argument for parameter " + name);
             System.out.println("");
-            showHelpAndExit();
+            showHelpAndExit(1);
         }
     }
     
@@ -127,7 +128,7 @@ public class Converter {
         if (value == null) {
             System.out.println("ERROR: " + name + " should be set.");
             System.out.println("");
-            showHelpAndExit();
+            showHelpAndExit(1);
         }
     }
     
@@ -135,16 +136,20 @@ public class Converter {
         if (value == null) {
             System.out.println("ERROR: " + name + " should be set.");
             System.out.println("");
-            showHelpAndExit();
+            showHelpAndExit(1);
         }
         if (!value.canRead()) {
             System.out.println("ERROR: cannot read file for " + name + ": " + value.getAbsolutePath());
             System.out.println("");
-            showHelpAndExit();
+            showHelpAndExit(1);
         }
     }
     
     public Converter(String mysqlUrl, String mysqlUser, String mysqlPassword, File mdbImport) throws IOException, ClassNotFoundException, SQLException {
+        LOG.info("MySQL URL: " + mysqlUrl);
+        LOG.info("MySQL user: " + mysqlUser);
+        LOG.info("MDB import: " + mdbImport.getAbsolutePath());
+        StopWatch sw = StopWatch.createStarted();
         Class.forName("com.mysql.jdbc.Driver");
         
         createMysqlConnection(mysqlUrl, mysqlUser, mysqlPassword);
@@ -161,6 +166,7 @@ public class Converter {
         for (String tableName : accessDb.getTableNames()) {
             createConstraints(tableName);
         }
+        storeStatus(mdbImport.getAbsoluteFile().getName(), sw.getTime(TimeUnit.SECONDS));
     }
     
     private void createTable(String tableName) throws IOException, SQLException {
@@ -330,11 +336,17 @@ public class Converter {
     }
     
     private void emptyMySQLDatabase() throws SQLException {
+        boolean hasImportStatusTable = false;
         Statement statement = createStatement();
         ResultSet rs = statement.executeQuery("SHOW TABLES");
         List<String> tables = new ArrayList<>();
         while (rs.next()) {
-            tables.add(rs.getString(1));
+            String table = rs.getString(1);
+            if (IMPORT_STATUS_TABLE.equals(table)) {
+                hasImportStatusTable = true;
+            } else {
+                tables.add(table);
+            }
         }
         if (tables.size() > 0) {
             createStatement().execute("SET FOREIGN_KEY_CHECKS = 0;");
@@ -342,6 +354,12 @@ public class Converter {
             LOG.info(deleteTablesSql);
             createStatement().execute(deleteTablesSql);
             createStatement().execute("SET FOREIGN_KEY_CHECKS = 1;");
+        }
+        if (!hasImportStatusTable) {
+            String sqlCreateTable = "CREATE TABLE `" + IMPORT_STATUS_TABLE + "` (`id` INT(4) NOT NULL AUTO_INCREMENT, `file` VARCHAR(255) NOT NULL, `importdate` DATETIME NOT NULL, `duration` INT(8) NOT NULL COMMENT 'Duration of import in seconds', PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='MDB Converter status';";
+            LOG.info(sqlCreateTable);
+            createStatement().execute(sqlCreateTable);
+            LOG.info("Created table {}", IMPORT_STATUS_TABLE);
         }
     }
     
@@ -351,5 +369,11 @@ public class Converter {
         } else {
             return "'" + value.replaceAll("\\\\", "\\\\\\\\").replaceAll("'", "\\\\'") + "'";
         }
+    }
+    
+    private void storeStatus(String importedFile, long durationSeconds) throws SQLException {
+        String insertSql = "INSERT INTO `" + IMPORT_STATUS_TABLE + "` (`file`, `importdate`, `duration`) VALUES (" + sqlEscapeValue(importedFile) + ", " + sqlEscapeValue(FastDateFormat.getInstance("yyyy-MM-dd HH:mm:ss").format(new Date())) + ", " + durationSeconds + ");";
+        LOG.info(insertSql);
+        createStatement().execute(insertSql);
     }
 }
