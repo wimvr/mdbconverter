@@ -150,7 +150,6 @@ public class Converter {
         LOG.info("MySQL user: " + mysqlUser);
         LOG.info("MDB import: " + mdbImport.getAbsolutePath());
         StopWatch sw = StopWatch.createStarted();
-        Class.forName("com.mysql.jdbc.Driver");
         
         createMysqlConnection(mysqlUrl, mysqlUser, mysqlPassword);
         accessDb = DatabaseBuilder.open(mdbImport);
