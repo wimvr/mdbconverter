@@ -99,7 +99,7 @@ public class Converter {
     }
     
     private static void showHelpAndExit(int exitCode) {
-        System.out.println("Uitleenconverter");
+        System.out.println("Mdbconverter");
         System.out.println("");
         System.out.println("-h | --help:");
         System.out.println("\tShow this help");
