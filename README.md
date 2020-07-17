@@ -27,7 +27,8 @@ be able to manage tables, constraints and data.
 
 The application can be started with the following command:
 
-```java -jar target/mdbconverter-0.1-SNAPSHOT.jar --config config.properties
+```
+java -jar target/mdbconverter-0.1-SNAPSHOT.jar --config config.properties
 ```
 
 One need to provide MySQL url, username and password and MDB file. This can be done via the config file, the individual
