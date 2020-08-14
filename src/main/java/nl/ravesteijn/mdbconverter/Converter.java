@@ -51,6 +51,7 @@ public class Converter {
         String mysqlUser = null;
         String mysqlPassword = null;
         File mdbImport = null;
+        List<String> mysqlSkipDrop = new ArrayList<>();
         
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -65,6 +66,10 @@ public class Converter {
                     String mdbImportProp = properties.getProperty("mdb.import");
                     if (mdbImportProp != null) {
                         mdbImport = new File(mdbImportProp);
+                    }
+                    String mysqlSkipDropProp = properties.getProperty("mysql.skipdrop");
+                    if (mysqlSkipDropProp != null) {
+                        mysqlSkipDrop = Arrays.asList(mysqlSkipDropProp.split(","));
                     }
                     break;
                 case "--mysqlurl":
@@ -83,6 +88,10 @@ public class Converter {
                     verifyParameterArgument("mdb", args, i);
                     mdbImport = new File(args[++i]);
                     break;
+                case "--mysqlskipdrop":
+                    verifyParameterArgument("mysqlskipdrop", args, i);
+                    mysqlSkipDrop = Arrays.asList(args[++i].split(","));
+                    break;
                 default:
                     System.out.println("ERROR: Unknown parameter " + args[i]);
                     System.out.println("");
@@ -95,7 +104,7 @@ public class Converter {
         verifyParameter("mysqlpassword", mysqlPassword);
         verifyParameter("mdb", mdbImport);
         
-        new Converter(mysqlUrl, mysqlUser, mysqlPassword, mdbImport);
+        new Converter(mysqlUrl, mysqlUser, mysqlPassword, mdbImport, mysqlSkipDrop);
     }
     
     private static void showHelpAndExit(int exitCode) {
@@ -113,6 +122,8 @@ public class Converter {
         System.out.println("\tMySQL password to connect with to the database. WARNING: this is not secure, use config file instead.");
         System.out.println("--mdb <file>");
         System.out.println("\tMDB file to convert to MySQL");
+        System.out.println("--mysqlskipdrop <table1>,<table2>,...");
+        System.out.println("\tMySQL tables not to drop when emptying database");
         System.exit(exitCode);
     }
     
@@ -145,7 +156,7 @@ public class Converter {
         }
     }
     
-    public Converter(String mysqlUrl, String mysqlUser, String mysqlPassword, File mdbImport) throws IOException, ClassNotFoundException, SQLException {
+    public Converter(String mysqlUrl, String mysqlUser, String mysqlPassword, File mdbImport, List<String> mysqlSkipDrop) throws IOException, ClassNotFoundException, SQLException {
         LOG.info("MySQL URL: " + mysqlUrl);
         LOG.info("MySQL user: " + mysqlUser);
         LOG.info("MDB import: " + mdbImport.getAbsolutePath());
@@ -154,7 +165,7 @@ public class Converter {
         createMysqlConnection(mysqlUrl, mysqlUser, mysqlPassword);
         accessDb = DatabaseBuilder.open(mdbImport);
         
-        emptyMySQLDatabase();
+        emptyMySQLDatabase(mysqlSkipDrop);
         
         for (String tableName : accessDb.getTableNames()) {
             createTable(tableName);
@@ -334,7 +345,7 @@ public class Converter {
         mysqlConnection = DriverManager.getConnection(mysqlUrl, mysqlUser, mysqlPassword);
     }
     
-    private void emptyMySQLDatabase() throws SQLException {
+    private void emptyMySQLDatabase(List<String> mysqlSkipDrop) throws SQLException {
         boolean hasImportStatusTable = false;
         Statement statement = createStatement();
         ResultSet rs = statement.executeQuery("SHOW TABLES");
@@ -343,7 +354,7 @@ public class Converter {
             String table = rs.getString(1);
             if (IMPORT_STATUS_TABLE.equals(table)) {
                 hasImportStatusTable = true;
-            } else {
+            } else if (!mysqlSkipDrop.contains(table)) {
                 tables.add(table);
             }
         }

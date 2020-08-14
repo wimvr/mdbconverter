@@ -2,3 +2,4 @@ mysql.url=jdbc:mysql://localhost/<database>?useUnicode=true&characterEncoding=UT
 mysql.user=<user>
 mysql.password=<password>
 mdb.import=<file-to-import>.mdb
+mysql.skipdrop=<table1>,<table2>,...
