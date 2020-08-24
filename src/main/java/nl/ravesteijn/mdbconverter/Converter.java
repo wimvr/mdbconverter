@@ -37,7 +37,7 @@ import com.healthmarketscience.jackcess.impl.IndexImpl;
 
 public class Converter {
     private static final Logger LOG = LoggerFactory.getLogger(Converter.class);
-    private static final String IMPORT_STATUS_TABLE = "mdb_import_status";
+    private static final String IMPORT_STATUS_TABLE = "import_status";
     
     private Connection mysqlConnection;
     private Database accessDb;
@@ -51,7 +51,7 @@ public class Converter {
         String mysqlUser = null;
         String mysqlPassword = null;
         File mdbImport = null;
-        List<String> mysqlSkipDrop = new ArrayList<>();
+        String mysqlTablePrefix = "";
         
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -67,10 +67,7 @@ public class Converter {
                     if (mdbImportProp != null) {
                         mdbImport = new File(mdbImportProp);
                     }
-                    String mysqlSkipDropProp = properties.getProperty("mysql.skipdrop");
-                    if (mysqlSkipDropProp != null) {
-                        mysqlSkipDrop = Arrays.asList(mysqlSkipDropProp.split(","));
-                    }
+                    mysqlTablePrefix = properties.getProperty("mysql.tableprefix", "");
                     break;
                 case "--mysqlurl":
                     verifyParameterArgument("mysqlurl", args, i);
@@ -88,9 +85,9 @@ public class Converter {
                     verifyParameterArgument("mdb", args, i);
                     mdbImport = new File(args[++i]);
                     break;
-                case "--mysqlskipdrop":
-                    verifyParameterArgument("mysqlskipdrop", args, i);
-                    mysqlSkipDrop = Arrays.asList(args[++i].split(","));
+                case "--mysqltableprefix":
+                    verifyParameterArgument("mysqltableprefix", args, i);
+                    mysqlTablePrefix = args[++i];
                     break;
                 default:
                     System.out.println("ERROR: Unknown parameter " + args[i]);
@@ -104,7 +101,7 @@ public class Converter {
         verifyParameter("mysqlpassword", mysqlPassword);
         verifyParameter("mdb", mdbImport);
         
-        new Converter(mysqlUrl, mysqlUser, mysqlPassword, mdbImport, mysqlSkipDrop);
+        new Converter(mysqlUrl, mysqlUser, mysqlPassword, mdbImport, mysqlTablePrefix);
     }
     
     private static void showHelpAndExit(int exitCode) {
@@ -122,8 +119,8 @@ public class Converter {
         System.out.println("\tMySQL password to connect with to the database. WARNING: this is not secure, use config file instead.");
         System.out.println("--mdb <file>");
         System.out.println("\tMDB file to convert to MySQL");
-        System.out.println("--mysqlskipdrop <table1>,<table2>,...");
-        System.out.println("\tMySQL tables not to drop when emptying database");
+        System.out.println("--mysqltableprefix <prefix>");
+        System.out.println("\tMySQL table prefix. Only tables with this prefix will be dropped.");
         System.exit(exitCode);
     }
     
@@ -156,7 +153,7 @@ public class Converter {
         }
     }
     
-    public Converter(String mysqlUrl, String mysqlUser, String mysqlPassword, File mdbImport, List<String> mysqlSkipDrop) throws IOException, ClassNotFoundException, SQLException {
+    public Converter(String mysqlUrl, String mysqlUser, String mysqlPassword, File mdbImport, String mysqlTablePrefix) throws IOException, ClassNotFoundException, SQLException {
         LOG.info("MySQL URL: " + mysqlUrl);
         LOG.info("MySQL user: " + mysqlUser);
         LOG.info("MDB import: " + mdbImport.getAbsolutePath());
@@ -165,25 +162,25 @@ public class Converter {
         createMysqlConnection(mysqlUrl, mysqlUser, mysqlPassword);
         accessDb = DatabaseBuilder.open(mdbImport);
         
-        emptyMySQLDatabase(mysqlSkipDrop);
+        emptyMySQLDatabase(mysqlTablePrefix);
         
         for (String tableName : accessDb.getTableNames()) {
-            createTable(tableName);
+            createTable(tableName, mysqlTablePrefix);
         }
         for (String tableName : accessDb.getTableNames()) {
-            copyData(tableName);
+            copyData(tableName, mysqlTablePrefix);
         }
         for (String tableName : accessDb.getTableNames()) {
-            createConstraints(tableName);
+            createConstraints(tableName, mysqlTablePrefix);
         }
         storeStatus(mdbImport.getAbsoluteFile().getName(), sw.getTime(TimeUnit.SECONDS));
     }
     
-    private void createTable(String tableName) throws IOException, SQLException {
+    private void createTable(String tableName, String mysqlTablePrefix) throws IOException, SQLException {
         Table table = accessDb.getTable(tableName);
         List<String> columnDefs = table.getColumns().stream().map(c -> getColumnDefinition(c)).collect(Collectors.toList());
         columnDefs.add("PRIMARY KEY (`" + table.getPrimaryKeyIndex().getColumns().get(0).getName() + "`)");
-        String sqlCreateTable = "CREATE TABLE `" + tableName + "` (\n\t" + StringUtils.join(columnDefs, ",\n\t")
+        String sqlCreateTable = "CREATE TABLE `" + mysqlTablePrefix + tableName + "` (\n\t" + StringUtils.join(columnDefs, ",\n\t")
                 + "\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT=" + sqlEscapeValue((String) table.getProperties().getValue("Description")) + ";\n";
         LOG.info(sqlCreateTable);
         createStatement().execute(sqlCreateTable);
@@ -284,11 +281,11 @@ public class Converter {
         }
     }
     
-    private void copyData(String tableName) throws IOException, SQLException {
+    private void copyData(String tableName, String mysqlTablePrefix) throws IOException, SQLException {
         Table table = accessDb.getTable(tableName);
         int totalRows = table.getRowCount();
         List<? extends Column> columns = table.getColumns();
-        String insertSql = "INSERT INTO `" + tableName + "` (" + columns.stream().map(c -> c.getName()).collect(Collectors.joining("`, `", "`", "`")) + ") VALUES \n(";
+        String insertSql = "INSERT INTO `" + mysqlTablePrefix + tableName + "` (" + columns.stream().map(c -> c.getName()).collect(Collectors.joining("`, `", "`", "`")) + ") VALUES \n(";
         List<String> insertRowsSql = new ArrayList<>();
         Row row;
         int rowcount = 0;
@@ -311,23 +308,23 @@ public class Converter {
         }
     }
     
-    private void createConstraints(String tableName) throws IOException, SQLException {
+    private void createConstraints(String tableName, String mysqlTablePrefix) throws IOException, SQLException {
         Table table = accessDb.getTable(tableName);
-        List<String> constraintDefs = table.getIndexes().stream().map(i -> getConstraintDefinition(i)).filter(c -> c != null).collect(Collectors.toList());
+        List<String> constraintDefs = table.getIndexes().stream().map(i -> getConstraintDefinition(i, mysqlTablePrefix)).filter(c -> c != null).collect(Collectors.toList());
         if (constraintDefs.size() > 0) {
-            String sqlCreateTable = "ALTER TABLE `" + tableName + "`\n\t" + StringUtils.join(constraintDefs, ",\n\t") + ";";
+            String sqlCreateTable = "ALTER TABLE `" + mysqlTablePrefix + tableName + "`\n\t" + StringUtils.join(constraintDefs, ",\n\t") + ";";
             LOG.info(sqlCreateTable);
             createStatement().execute(sqlCreateTable);
             LOG.info("Created constraints for table {}", tableName);
         }
     }
     
-    private String getConstraintDefinition(Index index) {
+    private String getConstraintDefinition(Index index, String mysqlTablePrefix) {
         if (index.isForeignKey() && index instanceof IndexImpl && !((IndexImpl) index).getReference().isPrimaryTable()) {
             try {
                 return "ADD CONSTRAINT " + index.getName()
                         + " FOREIGN KEY (" + index.getColumns().stream().map(c -> "`" + c.getName() + "`").collect(Collectors.joining(","))
-                        + ") REFERENCES `" + index.getReferencedIndex().getTable().getName() + "`(" + index.getReferencedIndex().getColumns().stream().map(c -> "`" + c.getName() + "`").collect(Collectors.joining(",")) + ")";
+                        + ") REFERENCES `" + mysqlTablePrefix + index.getReferencedIndex().getTable().getName() + "`(" + index.getReferencedIndex().getColumns().stream().map(c -> "`" + c.getName() + "`").collect(Collectors.joining(",")) + ")";
             } catch (IOException e) {
                 LOG.error(e.getMessage(), e);
                 return null;
@@ -345,7 +342,7 @@ public class Converter {
         mysqlConnection = DriverManager.getConnection(mysqlUrl, mysqlUser, mysqlPassword);
     }
     
-    private void emptyMySQLDatabase(List<String> mysqlSkipDrop) throws SQLException {
+    private void emptyMySQLDatabase(String mysqlTablePrefix) throws SQLException {
         boolean hasImportStatusTable = false;
         Statement statement = createStatement();
         ResultSet rs = statement.executeQuery("SHOW TABLES");
@@ -354,7 +351,7 @@ public class Converter {
             String table = rs.getString(1);
             if (IMPORT_STATUS_TABLE.equals(table)) {
                 hasImportStatusTable = true;
-            } else if (!mysqlSkipDrop.contains(table)) {
+            } else if (table.startsWith(mysqlTablePrefix)) {
                 tables.add(table);
             }
         }
