@@ -173,7 +173,7 @@ public class Converter {
         for (String tableName : accessDb.getTableNames()) {
             createConstraints(tableName, mysqlTablePrefix);
         }
-        storeStatus(mdbImport.getAbsoluteFile().getName(), sw.getTime(TimeUnit.SECONDS));
+        storeStatus(mdbImport.getAbsoluteFile().getName(), mysqlTablePrefix, sw.getTime(TimeUnit.SECONDS));
     }
     
     private void createTable(String tableName, String mysqlTablePrefix) throws IOException, SQLException {
@@ -322,7 +322,7 @@ public class Converter {
     private String getConstraintDefinition(Index index, String mysqlTablePrefix) {
         if (index.isForeignKey() && index instanceof IndexImpl && !((IndexImpl) index).getReference().isPrimaryTable()) {
             try {
-                return "ADD CONSTRAINT " + index.getName()
+                return "ADD CONSTRAINT " + mysqlTablePrefix + index.getName()
                         + " FOREIGN KEY (" + index.getColumns().stream().map(c -> "`" + c.getName() + "`").collect(Collectors.joining(","))
                         + ") REFERENCES `" + mysqlTablePrefix + index.getReferencedIndex().getTable().getName() + "`(" + index.getReferencedIndex().getColumns().stream().map(c -> "`" + c.getName() + "`").collect(Collectors.joining(",")) + ")";
             } catch (IOException e) {
@@ -363,7 +363,7 @@ public class Converter {
             createStatement().execute("SET FOREIGN_KEY_CHECKS = 1;");
         }
         if (!hasImportStatusTable) {
-            String sqlCreateTable = "CREATE TABLE `" + IMPORT_STATUS_TABLE + "` (`id` INT(4) NOT NULL AUTO_INCREMENT, `file` VARCHAR(255) NOT NULL, `importdate` DATETIME NOT NULL, `duration` INT(8) NOT NULL COMMENT 'Duration of import in seconds', PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='MDB Converter status';";
+            String sqlCreateTable = "CREATE TABLE `" + IMPORT_STATUS_TABLE + "` (`id` INT(4) NOT NULL AUTO_INCREMENT, `file` VARCHAR(255) NOT NULL, `prefix` VARCHAR(6) NOT NULL, `importdate` DATETIME NOT NULL, `duration` INT(8) NOT NULL COMMENT 'Duration of import in seconds', PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COMMENT='MDB Converter status';";
             LOG.info(sqlCreateTable);
             createStatement().execute(sqlCreateTable);
             LOG.info("Created table {}", IMPORT_STATUS_TABLE);
@@ -378,8 +378,8 @@ public class Converter {
         }
     }
     
-    private void storeStatus(String importedFile, long durationSeconds) throws SQLException {
-        String insertSql = "INSERT INTO `" + IMPORT_STATUS_TABLE + "` (`file`, `importdate`, `duration`) VALUES (" + sqlEscapeValue(importedFile) + ", " + sqlEscapeValue(FastDateFormat.getInstance("yyyy-MM-dd HH:mm:ss").format(new Date())) + ", " + durationSeconds + ");";
+    private void storeStatus(String importedFile, String prefix, long durationSeconds) throws SQLException {
+        String insertSql = "INSERT INTO `" + IMPORT_STATUS_TABLE + "` (`file`, `prefix`, `importdate`, `duration`) VALUES (" + sqlEscapeValue(importedFile) + ", " + sqlEscapeValue(prefix) + ", " + sqlEscapeValue(FastDateFormat.getInstance("yyyy-MM-dd HH:mm:ss").format(new Date())) + ", " + durationSeconds + ");";
         LOG.info(insertSql);
         createStatement().execute(insertSql);
     }
