@@ -207,7 +207,7 @@ public class Converter {
                 def.append(" VARCHAR(" + column.getLength() + ")");
                 break;
             case SHORT_DATE_TIME:
-                def.append(" DATE");
+                def.append(" DATETIME");
                 break;
             case DOUBLE:
             case FLOAT:
@@ -269,7 +269,7 @@ public class Converter {
                 return String.valueOf(value);
             case SHORT_DATE_TIME:
                 if (value instanceof Date) {
-                    return sqlEscapeValue(new SimpleDateFormat("YYYY-MM-dd").format((Date) value));
+                    return sqlEscapeValue(new SimpleDateFormat("YYYY-MM-dd HH:mm:ss").format((Date) value));
                 } else {
                     return null;
                 }
